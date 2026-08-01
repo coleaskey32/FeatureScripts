@@ -324,7 +324,7 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
         // cuboids plus four corner cylinders (radius = margin, capped
         // so the cuboids keep positive size on 1-hole grids).
         const cornerR = slick ?
-            min(definition.margin, 0.45 * width, 0.45 * height) : 0 * meter;
+            min(definition.margin, min(0.45 * width, 0.45 * height)) : 0 * meter;
 
         if (cornerR > 0.2 * millimeter)
         {
