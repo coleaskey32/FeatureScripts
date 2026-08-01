@@ -8,7 +8,7 @@ A collection of Onshape FeatureScript custom features. Despite the `.js` extensi
 
 Current contents:
 
-- `Pegboard-Accessories.js` — a "Pegboard holder" feature that generates tool holders (upswept hook, double prong, shelf, ring rack, can rack, slot rack, or bare backplate) for US-standard pegboard (1/4" holes on 1" centers). An optional "Slick styling" mode rounds the backplate corners, adds ball-end/blended hook tips, and applies a best-effort edge fillet (`try silent`) over the finished body.
+- `Pegboard-Accessories.js` — a "Pegboard holder" feature that generates tool holders (upswept hook, double prong, shelf, ring rack, can rack, slot rack, or bare backplate) for US-standard pegboard (1/4" holes on 1" centers). Styling is always on: rounded backplate corners, ball-end/blended hook tips, and an all-edges fillet via the std `fillet` feature. The fillet's first attempt runs in a plain `try` so its error surfaces on the feature if it fails (never `try silent` for the primary attempt — silent failures are indistinguishable from "not generating"); smaller-radius fallbacks then run silently.
 
 ## FeatureScript conventions used here
 

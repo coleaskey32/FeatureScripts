@@ -277,14 +277,8 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
         }
 
         // ---- styling ----
-        annotation { "Name" : "Slick styling", "Default" : true }
-        definition.slick is boolean;
-
-        if (definition.slick)
-        {
-            annotation { "Name" : "Edge fillet radius" }
-            isLength(definition.edgeR, EDGE_R_BOUNDS);
-        }
+        annotation { "Name" : "Edge fillet radius" }
+        isLength(definition.edgeR, EDGE_R_BOUNDS);
 
         // ---- placement ----
         annotation { "Name" : "Place on mate connector" }
@@ -317,14 +311,11 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
         const yT =  height / 2;
         const z0 = 0 * meter;
 
-        const slick = definition.slick;
-
         // ---------- backplate ----------
-        // Slick styling: rounded corners, built as two overlapping
-        // cuboids plus four corner cylinders (radius = margin, capped
-        // so the cuboids keep positive size on 1-hole grids).
-        const cornerR = slick ?
-            min(definition.margin, min(0.45 * width, 0.45 * height)) : 0 * meter;
+        // Rounded corners, built as two overlapping cuboids plus four
+        // corner cylinders (radius = margin, capped so the cuboids
+        // keep positive size on 1-hole grids).
+        const cornerR = min(definition.margin, min(0.45 * width, 0.45 * height));
 
         if (cornerR > 0.2 * millimeter)
         {
@@ -392,8 +383,10 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
 
         // ---------- holder front end ----------
         // Upswept hook: shaft angled upward by upAngle, then an
-        // upturned tip so tools can't slide off. Slick styling blends
-        // the elbow with a sphere and caps the tip with a ball knob.
+        // upturned tip so tools can't slide off. A sphere blends the
+        // elbow and a ball knob caps the tip. The elbow sphere is
+        // slightly oversized so it intersects (not just kisses) the
+        // rods — tangent contact makes booleans and fillets fragile.
         if (definition.style == HolderStyle.HOOK ||
             definition.style == HolderStyle.DOUBLE)
         {
@@ -426,17 +419,14 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
                             "radius"       : rodR
                         });
 
-                if (slick)
-                {
-                    fSphere(context, id + ("elbow" ~ p), {
-                                "center" : elbow,
-                                "radius" : rodR
-                            });
-                    fSphere(context, id + ("knob" ~ p), {
-                                "center" : tipTop,
-                                "radius" : 1.5 * rodR
-                            });
-                }
+                fSphere(context, id + ("elbow" ~ p), {
+                            "center" : elbow,
+                            "radius" : 1.05 * rodR
+                        });
+                fSphere(context, id + ("knob" ~ p), {
+                            "center" : tipTop,
+                            "radius" : 1.5 * rodR
+                        });
             }
         }
 
@@ -578,18 +568,41 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
                     });
         }
 
-        // ---------- slick edge break ----------
-        // Best-effort: a small fillet on every edge softens the whole
-        // part. try silent so an unfilletable configuration still
-        // regenerates cleanly, just without the rounding.
-        if (slick)
+        // ---------- edge break ----------
+        // A small fillet on every edge softens the whole part. The std
+        // fillet feature (not opFillet) is used because it propagates
+        // across the tangent seams left by the rounded corners and
+        // sphere blends.
+        //
+        // The first attempt runs in a plain (non-silent) try: if it
+        // fails, its actual error message is shown on the feature
+        // instead of being swallowed, so you can see what went wrong.
+        // Fallback attempts at half and quarter radius then run
+        // silently — if one succeeds you get a smaller edge break, and
+        // the warning tells you the requested radius was the problem.
+        var filletOk = false;
+        try
         {
-            try silent
+            fillet(context, id + "smooth", {
+                        "entities" : qCreatedBy(id, EntityType.EDGE),
+                        "radius"   : definition.edgeR
+                    });
+            filletOk = true;
+        }
+        if (!filletOk)
+        {
+            var r = definition.edgeR / 2;
+            for (var attempt = 0; attempt < 2 && !filletOk; attempt += 1)
             {
-                opFillet(context, id + "smooth", {
-                            "entities" : qCreatedBy(id, EntityType.EDGE),
-                            "radius"   : definition.edgeR
-                        });
+                try silent
+                {
+                    fillet(context, id + ("smoothFallback" ~ attempt), {
+                                "entities" : qCreatedBy(id, EntityType.EDGE),
+                                "radius"   : r
+                            });
+                    filletOk = true;
+                }
+                r = r / 2;
             }
         }
 
