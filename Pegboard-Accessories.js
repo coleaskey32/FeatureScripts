@@ -11,18 +11,25 @@ import(path : "onshape/std/sheetMetalUtils.fs", version : "686.0");
      +Y = up
      +Z = out of the board face (toward you)
      Z = 0 is the FRONT SURFACE of the pegboard.
+
+   Hooks follow the standard commercial shape: shaft swept
+   slightly upward with an upturned tip so tools can't slide off.
    ============================================================ */
 
 export enum HolderStyle
 {
     annotation { "Name" : "Backplate only" }
     NONE,
-    annotation { "Name" : "Hook" }
+    annotation { "Name" : "Hook (upswept)" }
     HOOK,
+    annotation { "Name" : "Double prong (pliers, cutters)" }
+    DOUBLE,
     annotation { "Name" : "Shelf" }
     SHELF,
     annotation { "Name" : "Ring rack" }
     RINGS,
+    annotation { "Name" : "Can rack (spray paint, bottles)" }
+    CANS,
     annotation { "Name" : "Slot rack" }
     SLOTS
 }
@@ -101,6 +108,18 @@ const ROD_BOUNDS =
     (inch)       : 0.2
 } as LengthBoundSpec;
 
+const ANGLE_BOUNDS =
+{
+    (degree) : [0, 10, 45]
+} as AngleBoundSpec;
+
+const PRONG_BOUNDS =
+{
+    (meter)      : [0.002, 0.018, 0.3],
+    (millimeter) : 18.0,
+    (inch)       : 0.7
+} as LengthBoundSpec;
+
 const RING_R_BOUNDS =
 {
     (meter)      : [0.0005, 0.01, 0.2],
@@ -108,11 +127,32 @@ const RING_R_BOUNDS =
     (inch)       : 0.4
 } as LengthBoundSpec;
 
+const CAN_DIA_BOUNDS =
+{
+    (meter)      : [0.005, 0.07, 0.2],
+    (millimeter) : 70.0,
+    (inch)       : 2.75
+} as LengthBoundSpec;
+
+const CAN_DEPTH_BOUNDS =
+{
+    (meter)      : [0.01, 0.1, 0.3],
+    (millimeter) : 100.0,
+    (inch)       : 4.0
+} as LengthBoundSpec;
+
 const SLOT_W_BOUNDS =
 {
     (meter)      : [0.0005, 0.008, 0.2],
     (millimeter) : 8.0,
     (inch)       : 0.3
+} as LengthBoundSpec;
+
+const EDGE_R_BOUNDS =
+{
+    (meter)      : [0.0001, 0.0008, 0.005],
+    (millimeter) : 0.8,
+    (inch)       : 0.03
 } as LengthBoundSpec;
 
 annotation { "Feature Type Name" : "Pegboard holder" }
@@ -158,16 +198,26 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
         annotation { "Name" : "Holder style" }
         definition.style is HolderStyle;
 
-        if (definition.style == HolderStyle.HOOK)
+        if (definition.style == HolderStyle.HOOK ||
+            definition.style == HolderStyle.DOUBLE)
         {
             annotation { "Name" : "Hook length out" }
             isLength(definition.hookOut, OUT_BOUNDS);
 
-            annotation { "Name" : "Hook tip height" }
+            annotation { "Name" : "Tip rise" }
             isLength(definition.hookUp, ROD_BOUNDS);
 
             annotation { "Name" : "Rod diameter" }
             isLength(definition.rodDia, ROD_BOUNDS);
+
+            annotation { "Name" : "Shaft upsweep angle" }
+            isAngle(definition.upAngle, ANGLE_BOUNDS);
+        }
+
+        if (definition.style == HolderStyle.DOUBLE)
+        {
+            annotation { "Name" : "Prong spacing" }
+            isLength(definition.prongGap, PRONG_BOUNDS);
         }
 
         if (definition.style == HolderStyle.SHELF ||
@@ -176,7 +226,13 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
         {
             annotation { "Name" : "Shelf depth" }
             isLength(definition.shelfDepth, OUT_BOUNDS);
+        }
 
+        if (definition.style == HolderStyle.SHELF ||
+            definition.style == HolderStyle.RINGS ||
+            definition.style == HolderStyle.SLOTS ||
+            definition.style == HolderStyle.CANS)
+        {
             annotation { "Name" : "Shelf thickness" }
             isLength(definition.shelfT, PLATE_BOUNDS);
         }
@@ -196,6 +252,18 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
             isLength(definition.ringR, RING_R_BOUNDS);
         }
 
+        if (definition.style == HolderStyle.CANS)
+        {
+            annotation { "Name" : "Number of cans" }
+            isInteger(definition.canCount, RING_BOUNDS);
+
+            annotation { "Name" : "Can diameter" }
+            isLength(definition.canDia, CAN_DIA_BOUNDS);
+
+            annotation { "Name" : "Can rack depth" }
+            isLength(definition.canDepth, CAN_DEPTH_BOUNDS);
+        }
+
         if (definition.style == HolderStyle.SLOTS)
         {
             annotation { "Name" : "Number of slots" }
@@ -206,6 +274,16 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
 
             annotation { "Name" : "Slot depth" }
             isLength(definition.slotDepth, RING_R_BOUNDS);
+        }
+
+        // ---- styling ----
+        annotation { "Name" : "Slick styling", "Default" : true }
+        definition.slick is boolean;
+
+        if (definition.slick)
+        {
+            annotation { "Name" : "Edge fillet radius" }
+            isLength(definition.edgeR, EDGE_R_BOUNDS);
         }
 
         // ---- placement ----
@@ -239,11 +317,46 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
         const yT =  height / 2;
         const z0 = 0 * meter;
 
+        const slick = definition.slick;
+
         // ---------- backplate ----------
-        fCuboid(context, id + "plate", {
-                    "corner1" : vector(xL, yB, z0),
-                    "corner2" : vector(xR, yT, plateT)
-                });
+        // Slick styling: rounded corners, built as two overlapping
+        // cuboids plus four corner cylinders (radius = margin, capped
+        // so the cuboids keep positive size on 1-hole grids).
+        const cornerR = slick ?
+            min(definition.margin, 0.45 * width, 0.45 * height) : 0 * meter;
+
+        if (cornerR > 0.2 * millimeter)
+        {
+            fCuboid(context, id + "plateX", {
+                        "corner1" : vector(xL + cornerR, yB, z0),
+                        "corner2" : vector(xR - cornerR, yT, plateT)
+                    });
+            fCuboid(context, id + "plateY", {
+                        "corner1" : vector(xL, yB + cornerR, z0),
+                        "corner2" : vector(xR, yT - cornerR, plateT)
+                    });
+            const cornerXs = [xL + cornerR, xR - cornerR];
+            const cornerYs = [yB + cornerR, yT - cornerR];
+            for (var ci = 0; ci < 2; ci += 1)
+            {
+                for (var cj = 0; cj < 2; cj += 1)
+                {
+                    fCylinder(context, id + ("corner" ~ ci ~ "_" ~ cj), {
+                                "topCenter"    : vector(cornerXs[ci], cornerYs[cj], plateT),
+                                "bottomCenter" : vector(cornerXs[ci], cornerYs[cj], z0),
+                                "radius"       : cornerR
+                            });
+                }
+            }
+        }
+        else
+        {
+            fCuboid(context, id + "plate", {
+                        "corner1" : vector(xL, yB, z0),
+                        "corner2" : vector(xR, yT, plateT)
+                    });
+        }
 
         // ---------- pegs ----------
         const hooked = definition.pegStyle == PegStyle.HOOKED;
@@ -278,23 +391,53 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
         }
 
         // ---------- holder front end ----------
-        if (definition.style == HolderStyle.HOOK)
+        // Upswept hook: shaft angled upward by upAngle, then an
+        // upturned tip so tools can't slide off. Slick styling blends
+        // the elbow with a sphere and caps the tip with a ball knob.
+        if (definition.style == HolderStyle.HOOK ||
+            definition.style == HolderStyle.DOUBLE)
         {
             const rodR = definition.rodDia / 2;
             const yH = yB + 2 * rodR;
-            const zTip = plateT + definition.hookOut - rodR;
+            const zEnd = plateT + definition.hookOut;
+            const rise = zEnd * tan(definition.upAngle);
 
-            fCylinder(context, id + "rod", {
-                        "topCenter"    : vector(0 * meter, yH, z0),
-                        "bottomCenter" : vector(0 * meter, yH, plateT + definition.hookOut),
-                        "radius"       : rodR
-                    });
+            var prongXs = [0 * meter];
+            if (definition.style == HolderStyle.DOUBLE)
+            {
+                prongXs = [-definition.prongGap / 2, definition.prongGap / 2];
+            }
 
-            fCylinder(context, id + "tip", {
-                        "topCenter"    : vector(0 * meter, yH + definition.hookUp, zTip),
-                        "bottomCenter" : vector(0 * meter, yH, zTip),
-                        "radius"       : rodR
-                    });
+            for (var p = 0; p < size(prongXs); p += 1)
+            {
+                const px = prongXs[p];
+                const elbow = vector(px, yH + rise, zEnd);
+                const tipTop = elbow + vector(0 * meter, definition.hookUp, 0 * meter);
+
+                fCylinder(context, id + ("shaft" ~ p), {
+                            "topCenter"    : elbow,
+                            "bottomCenter" : vector(px, yH, z0),
+                            "radius"       : rodR
+                        });
+
+                fCylinder(context, id + ("tip" ~ p), {
+                            "topCenter"    : tipTop,
+                            "bottomCenter" : elbow,
+                            "radius"       : rodR
+                        });
+
+                if (slick)
+                {
+                    fSphere(context, id + ("elbow" ~ p), {
+                                "center" : elbow,
+                                "radius" : rodR
+                            });
+                    fSphere(context, id + ("knob" ~ p), {
+                                "center" : tipTop,
+                                "radius" : 1.5 * rodR
+                            });
+                }
+            }
         }
 
         var shelfBuilt = false;
@@ -315,6 +458,23 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
                             "corner2" : vector(xR, yB + definition.shelfLip, plateT + definition.shelfDepth)
                         });
             }
+        }
+
+        // Can rack: solid floor at the bottom, ring band at the top.
+        // Cans drop through the band holes and stand on the floor
+        // (Wall Control style aerosol holder).
+        var canBandBuilt = false;
+        if (definition.style == HolderStyle.CANS)
+        {
+            canBandBuilt = true;
+            fCuboid(context, id + "canFloor", {
+                        "corner1" : vector(xL, yB, z0),
+                        "corner2" : vector(xR, yB + definition.shelfT, plateT + definition.canDepth)
+                    });
+            fCuboid(context, id + "canBand", {
+                        "corner1" : vector(xL, yT - definition.shelfT, z0),
+                        "corner2" : vector(xR, yT, plateT + definition.canDepth)
+                    });
         }
 
         // ---------- merge everything solid so far ----------
@@ -346,6 +506,35 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
                             "topCenter"    : vector(xc, yB + definition.shelfT + eps, zc),
                             "bottomCenter" : vector(xc, yB - eps, zc),
                             "radius"       : definition.ringR
+                        });
+                cutters = append(cutters, qCreatedBy(cid, EntityType.BODY));
+            }
+        }
+
+        if (canBandBuilt)
+        {
+            const n = definition.canCount;
+            const step = width / n;
+            const canR = definition.canDia / 2;
+            const zc = plateT + definition.canDepth / 2;
+
+            if (definition.canDia >= step)
+            {
+                throw regenError("Cans overlap. Reduce can diameter, reduce can count, or add holes across.");
+            }
+            if (definition.canDia + 4 * millimeter > definition.canDepth)
+            {
+                throw regenError("Can diameter must fit within the can rack depth. Increase can rack depth.");
+            }
+
+            for (var i = 0; i < n; i += 1)
+            {
+                const xc = xL + step * (i + 0.5);
+                const cid = id + ("can" ~ i);
+                fCylinder(context, cid, {
+                            "topCenter"    : vector(xc, yT + eps, zc),
+                            "bottomCenter" : vector(xc, yT - definition.shelfT - eps, zc),
+                            "radius"       : canR
                         });
                 cutters = append(cutters, qCreatedBy(cid, EntityType.BODY));
             }
@@ -389,6 +578,21 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
                     });
         }
 
+        // ---------- slick edge break ----------
+        // Best-effort: a small fillet on every edge softens the whole
+        // part. try silent so an unfilletable configuration still
+        // regenerates cleanly, just without the rounding.
+        if (slick)
+        {
+            try silent
+            {
+                opFillet(context, id + "smooth", {
+                            "entities" : qCreatedBy(id, EntityType.EDGE),
+                            "radius"   : definition.edgeR
+                        });
+            }
+        }
+
         // ---------- placement ----------
         if (definition.usePlacement)
         {
@@ -399,6 +603,3 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
                     });
         }
     });
-
-
-

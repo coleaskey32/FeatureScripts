@@ -8,7 +8,7 @@ A collection of Onshape FeatureScript custom features. Despite the `.js` extensi
 
 Current contents:
 
-- `Pegboard-Accessories.js` — a "Pegboard holder" feature that generates tool holders (hook, shelf, ring rack, slot rack, or bare backplate) for US-standard pegboard (1/4" holes on 1" centers).
+- `Pegboard-Accessories.js` — a "Pegboard holder" feature that generates tool holders (upswept hook, double prong, shelf, ring rack, can rack, slot rack, or bare backplate) for US-standard pegboard (1/4" holes on 1" centers). An optional "Slick styling" mode rounds the backplate corners, adds ball-end/blended hook tips, and applies a best-effort edge fillet (`try silent`) over the finished body.
 
 ## FeatureScript conventions used here
 
