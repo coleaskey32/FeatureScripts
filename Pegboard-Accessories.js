@@ -1,6 +1,5 @@
 FeatureScript 686;
 import(path : "onshape/std/geometry.fs", version : "686.0");
-import(path : "onshape/std/sheetMetalUtils.fs", version : "686.0");
 
 /* ============================================================
    Pegboard Tool Holder
@@ -12,8 +11,9 @@ import(path : "onshape/std/sheetMetalUtils.fs", version : "686.0");
      +Z = out of the board face (toward you)
      Z = 0 is the FRONT SURFACE of the pegboard.
 
-   Hooks follow the standard commercial shape: shaft swept
-   slightly upward with an upturned tip so tools can't slide off.
+   Hooks follow the standard commercial shape: one continuous
+   round rod swept up at an angle, bending smoothly into an
+   upturned tip so tools can't slide off.
    ============================================================ */
 
 export enum HolderStyle
@@ -324,7 +324,7 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
         // cuboids plus four corner cylinders (radius = margin, capped
         // so the cuboids keep positive size on 1-hole grids).
         const cornerR = slick ?
-            min(definition.margin, 0.45 * width, 0.45 * height) : 0 * meter;
+            min(definition.margin, min(0.45 * width, 0.45 * height)) : 0 * meter;
 
         if (cornerR > 0.2 * millimeter)
         {
@@ -391,16 +391,32 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
         }
 
         // ---------- holder front end ----------
-        // Upswept hook: shaft angled upward by upAngle, then an
-        // upturned tip so tools can't slide off. Slick styling blends
-        // the elbow with a sphere and caps the tip with a ball knob.
+        // Hook: one continuous round rod. A circular profile is swept
+        // along a path that runs up at the upsweep angle, bends
+        // through a tangent arc, and finishes with an upturned tip —
+        // so the cylinder cross-section is unbroken end to end.
+        // Slick styling caps the tip with a small ball end.
         if (definition.style == HolderStyle.HOOK ||
             definition.style == HolderStyle.DOUBLE)
         {
             const rodR = definition.rodDia / 2;
-            const yH = yB + 2 * rodR;
-            const zEnd = plateT + definition.hookOut;
-            const rise = zEnd * tan(definition.upAngle);
+            const upA = definition.upAngle;
+            const yRoot = yB + 2 * rodR;
+            const outLen = plateT + definition.hookOut;  // z of the bend corner
+            const bendR = definition.rodDia;             // > rodR so the sweep can't self-intersect
+            const turn = 90 * degree - upA;
+            const tangentLen = bendR * tan(turn / 2);
+            const shaftLen = outLen / cos(upA);
+
+            if (tangentLen >= shaftLen)
+            {
+                throw regenError("Hook is too short for its rod diameter and upsweep angle. Increase hook length out or reduce rod diameter.");
+            }
+            if (definition.style == HolderStyle.DOUBLE &&
+                definition.prongGap <= definition.rodDia)
+            {
+                throw regenError("Prong spacing must be larger than the rod diameter.");
+            }
 
             var prongXs = [0 * meter];
             if (definition.style == HolderStyle.DOUBLE)
@@ -411,34 +427,76 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
             for (var p = 0; p < size(prongXs); p += 1)
             {
                 const px = prongXs[p];
-                const elbow = vector(px, yH + rise, zEnd);
-                const tipTop = elbow + vector(0 * meter, definition.hookUp, 0 * meter);
 
-                fCylinder(context, id + ("shaft" ~ p), {
-                            "topCenter"    : elbow,
-                            "bottomCenter" : vector(px, yH, z0),
-                            "radius"       : rodR
+                // Path sketch lives on the plane x = px, oriented so
+                // sketch x = world Z (out of board), sketch y = world Y (up).
+                const start = vector(0 * meter, yRoot);
+                const shaftDir = vector(cos(upA), sin(upA));
+                const corner = vector(outLen, yRoot + outLen * tan(upA));
+                const arcStart = corner - tangentLen * shaftDir;
+                const arcEnd = corner + tangentLen * vector(0, 1);
+                const arcCenter = arcStart + bendR * vector(-sin(upA), cos(upA));
+                const arcMid = arcCenter + bendR * normalize((arcStart + arcEnd) / 2 - arcCenter);
+                const tipEnd = arcEnd + vector(0 * meter, definition.hookUp);
+
+                const pathId = id + ("hookPath" ~ p);
+                var pathSk = newSketchOnPlane(context, pathId, {
+                            "sketchPlane" : plane(vector(px, 0 * meter, 0 * meter),
+                                                  vector(-1, 0, 0), vector(0, 0, 1))
                         });
+                skLineSegment(pathSk, "shaft", { "start" : start, "end" : arcStart });
+                skArc(pathSk, "bend", { "start" : arcStart, "mid" : arcMid, "end" : arcEnd });
+                skLineSegment(pathSk, "tip", { "start" : arcEnd, "end" : tipEnd });
+                skSolve(pathSk);
 
-                fCylinder(context, id + ("tip" ~ p), {
-                            "topCenter"    : tipTop,
-                            "bottomCenter" : elbow,
-                            "radius"       : rodR
+                const profileId = id + ("hookProfile" ~ p);
+                var profileSk = newSketchOnPlane(context, profileId, {
+                            "sketchPlane" : plane(vector(px, yRoot, 0 * meter),
+                                                  vector(0, sin(upA), cos(upA)),
+                                                  vector(1, 0, 0))
+                        });
+                skCircle(profileSk, "disk", { "center" : vector(0 * meter, 0 * meter), "radius" : rodR });
+                skSolve(profileSk);
+
+                opSweep(context, id + ("hook" ~ p), {
+                            "profiles" : qSketchRegion(profileId, false),
+                            "path"     : qCreatedBy(pathId, EntityType.EDGE)
+                        });
+                opDeleteBodies(context, id + ("hookSketches" ~ p), {
+                            "entities" : qUnion([qCreatedBy(pathId, EntityType.BODY),
+                                                 qCreatedBy(profileId, EntityType.BODY)])
                         });
 
                 if (slick)
                 {
-                    fSphere(context, id + ("elbow" ~ p), {
-                                "center" : elbow,
-                                "radius" : rodR
-                            });
                     fSphere(context, id + ("knob" ~ p), {
-                                "center" : tipTop,
-                                "radius" : 1.5 * rodR
+                                "center" : vector(px, tipEnd[1], tipEnd[0]),
+                                "radius" : 1.25 * rodR
                             });
                 }
             }
         }
+
+        // Racks size themselves to their contents: if the requested
+        // rings/cans/slots don't fit across the backplate, the rack
+        // grows symmetrically past it (like commercial can racks)
+        // instead of failing to regenerate.
+        const rackGap = 6 * millimeter;
+        var rackW = width;
+        if (definition.style == HolderStyle.RINGS)
+        {
+            rackW = max(width, definition.ringCount * (2 * definition.ringR + rackGap));
+        }
+        if (definition.style == HolderStyle.CANS)
+        {
+            rackW = max(width, definition.canCount * (definition.canDia + rackGap));
+        }
+        if (definition.style == HolderStyle.SLOTS)
+        {
+            rackW = max(width, definition.slotCount * (definition.slotW + rackGap));
+        }
+        const xRL = -rackW / 2;
+        const xRR = rackW / 2;
 
         var shelfBuilt = false;
         if (definition.style == HolderStyle.SHELF ||
@@ -447,15 +505,15 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
         {
             shelfBuilt = true;
             fCuboid(context, id + "shelf", {
-                        "corner1" : vector(xL, yB, z0),
-                        "corner2" : vector(xR, yB + definition.shelfT, plateT + definition.shelfDepth)
+                        "corner1" : vector(xRL, yB, z0),
+                        "corner2" : vector(xRR, yB + definition.shelfT, plateT + definition.shelfDepth)
                     });
 
             if (definition.style == HolderStyle.SHELF)
             {
                 fCuboid(context, id + "shelfLip", {
-                            "corner1" : vector(xL, yB, plateT + definition.shelfDepth - definition.shelfT),
-                            "corner2" : vector(xR, yB + definition.shelfLip, plateT + definition.shelfDepth)
+                            "corner1" : vector(xRL, yB, plateT + definition.shelfDepth - definition.shelfT),
+                            "corner2" : vector(xRR, yB + definition.shelfLip, plateT + definition.shelfDepth)
                         });
             }
         }
@@ -468,18 +526,18 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
         {
             canBandBuilt = true;
             fCuboid(context, id + "canFloor", {
-                        "corner1" : vector(xL, yB, z0),
-                        "corner2" : vector(xR, yB + definition.shelfT, plateT + definition.canDepth)
+                        "corner1" : vector(xRL, yB, z0),
+                        "corner2" : vector(xRR, yB + definition.shelfT, plateT + definition.canDepth)
                     });
             fCuboid(context, id + "canBand", {
-                        "corner1" : vector(xL, yT - definition.shelfT, z0),
-                        "corner2" : vector(xR, yT, plateT + definition.canDepth)
+                        "corner1" : vector(xRL, yT - definition.shelfT, z0),
+                        "corner2" : vector(xRR, yT, plateT + definition.canDepth)
                     });
         }
 
         // ---------- merge everything solid so far ----------
         opBoolean(context, id + "union", {
-                    "tools" : qCreatedBy(id, EntityType.BODY),
+                    "tools" : qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID),
                     "operationType" : BooleanOperationType.UNION
                 });
 
@@ -490,17 +548,17 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
         if (shelfBuilt && definition.style == HolderStyle.RINGS)
         {
             const n = definition.ringCount;
-            const step = width / n;
+            const step = rackW / n;
             const zc = plateT + definition.shelfDepth / 2;
 
-            if (definition.ringR * 2 >= step)
+            if (definition.ringR * 2 + 2 * millimeter > definition.shelfDepth)
             {
-                throw regenError("Rings overlap. Reduce ring radius, reduce ring count, or add holes across.");
+                throw regenError("Ring diameter must fit within the shelf depth. Increase shelf depth or reduce ring radius.");
             }
 
             for (var i = 0; i < n; i += 1)
             {
-                const xc = xL + step * (i + 0.5);
+                const xc = xRL + step * (i + 0.5);
                 const cid = id + ("ring" ~ i);
                 fCylinder(context, cid, {
                             "topCenter"    : vector(xc, yB + definition.shelfT + eps, zc),
@@ -514,14 +572,10 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
         if (canBandBuilt)
         {
             const n = definition.canCount;
-            const step = width / n;
+            const step = rackW / n;
             const canR = definition.canDia / 2;
             const zc = plateT + definition.canDepth / 2;
 
-            if (definition.canDia >= step)
-            {
-                throw regenError("Cans overlap. Reduce can diameter, reduce can count, or add holes across.");
-            }
             if (definition.canDia + 4 * millimeter > definition.canDepth)
             {
                 throw regenError("Can diameter must fit within the can rack depth. Increase can rack depth.");
@@ -529,7 +583,7 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
 
             for (var i = 0; i < n; i += 1)
             {
-                const xc = xL + step * (i + 0.5);
+                const xc = xRL + step * (i + 0.5);
                 const cid = id + ("can" ~ i);
                 fCylinder(context, cid, {
                             "topCenter"    : vector(xc, yT + eps, zc),
@@ -543,12 +597,8 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
         if (shelfBuilt && definition.style == HolderStyle.SLOTS)
         {
             const n = definition.slotCount;
-            const step = width / n;
+            const step = rackW / n;
 
-            if (definition.slotW >= step)
-            {
-                throw regenError("Slots overlap. Reduce slot width or slot count.");
-            }
             if (definition.slotDepth >= definition.shelfDepth)
             {
                 throw regenError("Slot depth must be less than shelf depth.");
@@ -556,7 +606,7 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
 
             for (var i = 0; i < n; i += 1)
             {
-                const xc = xL + step * (i + 0.5);
+                const xc = xRL + step * (i + 0.5);
                 const cid = id + ("slot" ~ i);
                 fCuboid(context, cid, {
                             "corner1" : vector(xc - definition.slotW / 2, yB - eps,
