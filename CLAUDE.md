@@ -27,7 +27,7 @@ The feature builds in a fixed local frame, documented in the file's header comme
 
 Construction proceeds in phases, and new holder styles should follow the same flow:
 
-1. Create all solid bodies (`fCuboid`, `fCylinder`) with unique ids derived from the feature id (`id + "plate"`, `id + ("peg" ~ i ~ "_" ~ j)`).
+1. Create all solid bodies (`fCuboid`, `fCylinder`, `fSphere`; the hook rod is a circle profile swept along a sketched path with `opSweep`, and the helper sketches are deleted with `opDeleteBodies` immediately after the sweep) with unique ids derived from the feature id (`id + "plate"`, `id + ("peg" ~ i ~ "_" ~ j)`).
 2. Union everything created so far into one body (`opBoolean` over `qCreatedBy(id, EntityType.BODY)`).
 3. Create cutter bodies (ring holes, slots), collect their queries in a list, and subtract them in a single boolean (targets are `qSubtraction(qCreatedBy(...), cutterQ)` so cutters don't cut each other). Cutters are oversized by a small `eps` (1 mm) to avoid coincident-face booleans.
 4. Optionally transform all created bodies onto a user-picked mate connector (`evMateConnector` + `opTransform`); until then geometry lives in the local frame above.
