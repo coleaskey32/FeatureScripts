@@ -12,8 +12,8 @@ import(path : "onshape/std/geometry.fs", version : "686.0");
      Z = 0 is the FRONT SURFACE of the pegboard.
 
    Hooks follow the standard commercial shape: one continuous
-   round rod swept up at an angle, bending smoothly into an
-   upturned tip so tools can't slide off.
+   round rod swept out at a slight upward angle, curving gently
+   up at the tip so tools can't slide off.
    ============================================================ */
 
 export enum HolderStyle
@@ -391,26 +391,29 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
         }
 
         // ---------- holder front end ----------
-        // Hook: one continuous round rod. A circular profile is swept
-        // along a path that runs up at the upsweep angle, bends
-        // through a tangent arc, and finishes with an upturned tip —
-        // so the cylinder cross-section is unbroken end to end.
-        // Slick styling caps the tip with a small ball end.
+        // Hook: one continuous round rod, a constant circular
+        // cross-section swept end to end. The shaft runs straight out
+        // at the upsweep angle, then the tip curves gently upward
+        // along a circular arc. "Tip rise" sets how high the curved
+        // tip climbs; the bend radius follows from that rise.
         if (definition.style == HolderStyle.HOOK ||
             definition.style == HolderStyle.DOUBLE)
         {
             const rodR = definition.rodDia / 2;
             const upA = definition.upAngle;
             const yRoot = yB + 2 * rodR;
-            const outLen = plateT + definition.hookOut;  // z of the bend corner
-            const bendR = definition.rodDia;             // > rodR so the sweep can't self-intersect
-            const turn = 90 * degree - upA;
-            const tangentLen = bendR * tan(turn / 2);
-            const shaftLen = outLen / cos(upA);
+            const outZ = plateT + definition.hookOut;  // z reach of the hook tip
+            const tipTurn = 60 * degree;               // how far the tip curves up past the shaft
+            const bendR = definition.hookUp / (cos(upA) - cos(upA + tipTurn));
+            const arcSpanZ = bendR * (sin(upA + tipTurn) - sin(upA));
 
-            if (tangentLen >= shaftLen)
+            if (bendR <= rodR)
             {
-                throw regenError("Hook is too short for its rod diameter and upsweep angle. Increase hook length out or reduce rod diameter.");
+                throw regenError("Tip rise is too small for the rod diameter. Increase tip rise or reduce rod diameter.");
+            }
+            if (arcSpanZ >= outZ)
+            {
+                throw regenError("Hook is too short for the curved tip. Increase hook length out or reduce tip rise.");
             }
             if (definition.style == HolderStyle.DOUBLE &&
                 definition.prongGap <= definition.rodDia)
@@ -431,13 +434,14 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
                 // Path sketch lives on the plane x = px, oriented so
                 // sketch x = world Z (out of board), sketch y = world Y (up).
                 const start = vector(0 * meter, yRoot);
+                const shaftLen = (outZ - arcSpanZ) / cos(upA);
                 const shaftDir = vector(cos(upA), sin(upA));
-                const corner = vector(outLen, yRoot + outLen * tan(upA));
-                const arcStart = corner - tangentLen * shaftDir;
-                const arcEnd = corner + tangentLen * vector(0, 1);
+                const arcStart = start + shaftLen * shaftDir;
                 const arcCenter = arcStart + bendR * vector(-sin(upA), cos(upA));
-                const arcMid = arcCenter + bendR * normalize((arcStart + arcEnd) / 2 - arcCenter);
-                const tipEnd = arcEnd + vector(0 * meter, definition.hookUp);
+                const midA = upA + tipTurn / 2;
+                const endA = upA + tipTurn;
+                const arcMid = arcCenter + bendR * vector(sin(midA), -cos(midA));
+                const arcEnd = arcCenter + bendR * vector(sin(endA), -cos(endA));
 
                 const pathId = id + ("hookPath" ~ p);
                 var pathSk = newSketchOnPlane(context, pathId, {
@@ -446,7 +450,6 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
                         });
                 skLineSegment(pathSk, "shaft", { "start" : start, "end" : arcStart });
                 skArc(pathSk, "bend", { "start" : arcStart, "mid" : arcMid, "end" : arcEnd });
-                skLineSegment(pathSk, "tip", { "start" : arcEnd, "end" : tipEnd });
                 skSolve(pathSk);
 
                 const profileId = id + ("hookProfile" ~ p);
@@ -466,14 +469,6 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
                             "entities" : qUnion([qCreatedBy(pathId, EntityType.BODY),
                                                  qCreatedBy(profileId, EntityType.BODY)])
                         });
-
-                if (slick)
-                {
-                    fSphere(context, id + ("knob" ~ p), {
-                                "center" : vector(px, tipEnd[1], tipEnd[0]),
-                                "radius" : 1.25 * rodR
-                            });
-                }
             }
         }
 
