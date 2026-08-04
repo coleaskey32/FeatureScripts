@@ -180,10 +180,10 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
 
         if (definition.pegStyle == PegStyle.HOOKED)
         {
-            annotation { "Name" : "Lip thickness" }
+            annotation { "Name" : "Hook clearance behind board" }
             isLength(definition.lipT, LIP_T_BOUNDS);
 
-            annotation { "Name" : "Lip drop" }
+            annotation { "Name" : "Hook tip rise" }
             isLength(definition.lipDrop, LIP_D_BOUNDS);
         }
 
@@ -359,34 +359,70 @@ export const pegboardHolder = defineFeature(function(context is Context, id is I
         }
 
         // ---------- pegs ----------
+        // Hooked style: each top-row peg is one continuous round rod
+        // (swept circle profile) that passes through the board and
+        // curls smoothly upward behind it, locking the holder in like
+        // a commercial pegboard hook. All other pegs are straight
+        // friction pins.
         const hooked = definition.pegStyle == PegStyle.HOOKED;
-        const lipT = hooked ? definition.lipT : 0 * meter;
 
         for (var j = 0; j < rows; j += 1)
         {
             const y = -gridH / 2 + j * pitch;
-            const isTopRow = (j == rows - 1);
-            const useLip = hooked && isTopRow;
-            const pegLen = useLip ? boardT + lipT : boardT;
+            const useHook = hooked && (j == rows - 1);
 
             for (var i = 0; i < cols; i += 1)
             {
                 const x = -gridW / 2 + i * pitch;
-                const tag = "peg" ~ i ~ "_" ~ j;
 
-                fCylinder(context, id + tag, {
-                            "topCenter"    : vector(x, y, z0),
-                            "bottomCenter" : vector(x, y, -pegLen),
-                            "radius"       : pegR
-                        });
-
-                if (useLip)
+                if (!useHook)
                 {
-                    fCuboid(context, id + ("lip" ~ i ~ "_" ~ j), {
-                                "corner1" : vector(x - pegR, y - pegR - definition.lipDrop, -boardT - lipT),
-                                "corner2" : vector(x + pegR, y, -boardT)
+                    fCylinder(context, id + ("peg" ~ i ~ "_" ~ j), {
+                                "topCenter"    : vector(x, y, z0),
+                                "bottomCenter" : vector(x, y, -boardT),
+                                "radius"       : pegR
                             });
+                    continue;
                 }
+
+                // Path sketch on the plane x = x of this peg, oriented
+                // so sketch x = world Z, sketch y = world Y. The rod
+                // starts inside the backplate, runs straight through
+                // the board plus a clearance gap, then a quarter-circle
+                // arc turns it upward, ending in a short vertical tip.
+                const bendR = 1.5 * pegR;
+                const bendStart = vector(-boardT - definition.lipT, y);
+                const bendCenter = bendStart + vector(0 * meter, bendR);
+                const bendEnd = bendCenter + vector(-bendR, 0 * meter);
+                const bendMid = bendCenter + bendR * vector(-sqrt(0.5), -sqrt(0.5));
+                const tipEnd = bendEnd + vector(0 * meter, definition.lipDrop);
+
+                const pathId = id + ("pegPath" ~ i);
+                var pathSk = newSketchOnPlane(context, pathId, {
+                            "sketchPlane" : plane(vector(x, 0 * meter, 0 * meter),
+                                                  vector(-1, 0, 0), vector(0, 0, 1))
+                        });
+                skLineSegment(pathSk, "shank", { "start" : vector(plateT / 2, y), "end" : bendStart });
+                skArc(pathSk, "bend", { "start" : bendStart, "mid" : bendMid, "end" : bendEnd });
+                skLineSegment(pathSk, "tip", { "start" : bendEnd, "end" : tipEnd });
+                skSolve(pathSk);
+
+                const profileId = id + ("pegProfile" ~ i);
+                var profileSk = newSketchOnPlane(context, profileId, {
+                            "sketchPlane" : plane(vector(x, y, plateT / 2),
+                                                  vector(0, 0, 1), vector(1, 0, 0))
+                        });
+                skCircle(profileSk, "disk", { "center" : vector(0 * meter, 0 * meter), "radius" : pegR });
+                skSolve(profileSk);
+
+                opSweep(context, id + ("pegHook" ~ i), {
+                            "profiles" : qSketchRegion(profileId, false),
+                            "path"     : qCreatedBy(pathId, EntityType.EDGE)
+                        });
+                opDeleteBodies(context, id + ("pegSketches" ~ i), {
+                            "entities" : qUnion([qCreatedBy(pathId, EntityType.BODY),
+                                                 qCreatedBy(profileId, EntityType.BODY)])
+                        });
             }
         }
 
